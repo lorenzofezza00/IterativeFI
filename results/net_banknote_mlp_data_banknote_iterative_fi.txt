@@ -1,0 +1,121 @@
+[PROP/wald] K=1  FRcrit_avg=0.00454153  conf=0.95  steps=1  n=450
+half_norm=0.00485169  e_goal=0.00500000  FPC=on  DESIGN=WOR  N_pop=1152
+EP_control=wald  E_wald_final=0.00485169
+Wald_CI(95%):   [0.00000000, 0.00939323]   half=0.00485169   se=0.00247535   FPC=on
+SampleStdDev_FRcrit_across_injections: s=0.03597043 (n=450)
+injections_used=450  pilot=200  block=50  budget_cap=None
+baseline_pred_dist=[0.5558252427184466, 0.4441747572815534]
+global_summary_over_injections: fault_pred_dist = [0.5552319309600863, 0.4447680690399137] Δmax = 0.001 KL = 0.000 TV = 0.001 H_baseline = 0.687 H_global = 0.687 ΔH = -0.000 BER = 0.0045 per_class = [0.004619116933527414, 0.0044444444444444444] agree = 0.995 flip_asym = 0.131
+
+[E_seq] n, E_wald
+200,0.00973985
+250,0.00793939
+300,0.00656746
+350,0.00550654
+400,0.00526037
+450,0.00485169
+450,0.00485169
+
+[E_final] E_wald=0.00485169
+
+Top-100 worst injections (proposed iter EP)
+  1) Inj    168 | FRcrit=0.444175 | maj=0@1.00 Δmax=0.444 KL=0.587 | fc1 [5, 1] bit 30
+  2) Inj     81 | FRcrit=0.444175 | maj=0@1.00 Δmax=0.444 KL=0.587 | fc1 [5, 0] bit 30
+  3) Inj    375 | FRcrit=0.347087 | maj=1@0.79 Δmax=0.347 KL=0.252 | fc1 [0, 3] bit 30
+  4) Inj    433 | FRcrit=0.179612 | maj=1@0.62 Δmax=0.180 KL=0.065 | fc1 [1, 1] bit 30
+  5) Inj     99 | FRcrit=0.160194 | maj=1@0.60 Δmax=0.160 KL=0.052 | fc1 [4, 1] bit 31
+  6) Inj    232 | FRcrit=0.104369 | maj=1@0.55 Δmax=0.104 KL=0.022 | fc1 [3, 0] bit 30
+  7) Inj    407 | FRcrit=0.031553 | maj=0@0.52 Δmax=0.032 KL=0.002 | fc2 [0, 2] bit 30
+  8) Inj    285 | FRcrit=0.031553 | maj=0@0.52 Δmax=0.032 KL=0.002 | fc2 [1, 1] bit 30
+  9) Inj    425 | FRcrit=0.024272 | maj=0@0.53 Δmax=0.024 KL=0.001 | fc2 [0, 0] bit 30
+ 10) Inj    256 | FRcrit=0.024272 | maj=0@0.53 Δmax=0.024 KL=0.001 | fc2 [1, 0] bit 30
+ 11) Inj    100 | FRcrit=0.019417 | maj=0@0.54 Δmax=0.019 KL=0.001 | fc1 [5, 1] bit 27
+ 12) Inj    112 | FRcrit=0.019417 | maj=0@0.54 Δmax=0.019 KL=0.001 | fc1 [5, 1] bit 26
+ 13) Inj     80 | FRcrit=0.019417 | maj=0@0.54 Δmax=0.019 KL=0.001 | fc1 [5, 1] bit 29
+ 14) Inj     91 | FRcrit=0.019417 | maj=0@0.54 Δmax=0.019 KL=0.001 | fc1 [5, 1] bit 28
+ 15) Inj    393 | FRcrit=0.014563 | maj=0@0.54 Δmax=0.015 KL=0.000 | fc1 [3, 2] bit 31
+ 16) Inj    437 | FRcrit=0.012136 | maj=0@0.54 Δmax=0.012 KL=0.000 | fc1 [5, 1] bit 24
+ 17) Inj     33 | FRcrit=0.012136 | maj=0@0.54 Δmax=0.012 KL=0.000 | fc1 [2, 2] bit 27
+ 18) Inj    359 | FRcrit=0.012136 | maj=0@0.54 Δmax=0.012 KL=0.000 | fc1 [2, 1] bit 28
+ 19) Inj     43 | FRcrit=0.012136 | maj=0@0.54 Δmax=0.012 KL=0.000 | fc1 [2, 1] bit 26
+ 20) Inj    439 | FRcrit=0.009709 | maj=0@0.55 Δmax=0.010 KL=0.000 | fc1 [4, 2] bit 29
+ 21) Inj    129 | FRcrit=0.009709 | maj=0@0.55 Δmax=0.010 KL=0.000 | fc1 [4, 1] bit 26
+ 22) Inj    336 | FRcrit=0.009709 | maj=0@0.55 Δmax=0.010 KL=0.000 | fc1 [4, 1] bit 28
+ 23) Inj    108 | FRcrit=0.009709 | maj=0@0.55 Δmax=0.010 KL=0.000 | fc1 [4, 1] bit 29
+ 24) Inj    429 | FRcrit=0.009709 | maj=0@0.55 Δmax=0.010 KL=0.000 | fc1 [4, 2] bit 27
+ 25) Inj    350 | FRcrit=0.009709 | maj=0@0.55 Δmax=0.010 KL=0.000 | fc1 [2, 1] bit 23
+ 26) Inj    218 | FRcrit=0.009709 | maj=0@0.55 Δmax=0.010 KL=0.000 | fc1 [4, 1] bit 23
+ 27) Inj      6 | FRcrit=0.009709 | maj=0@0.55 Δmax=0.010 KL=0.000 | fc1 [4, 2] bit 26
+ 28) Inj     79 | FRcrit=0.007282 | maj=0@0.55 Δmax=0.007 KL=0.000 | fc1 [2, 1] bit 25
+ 29) Inj    178 | FRcrit=0.004854 | maj=0@0.55 Δmax=0.005 KL=0.000 | fc2 [0, 5] bit 23
+ 30) Inj     28 | FRcrit=0.002427 | maj=0@0.55 Δmax=0.002 KL=0.000 | fc1 [4, 3] bit 25
+ 31) Inj    109 | FRcrit=0.002427 | maj=0@0.55 Δmax=0.002 KL=0.000 | fc1 [5, 0] bit 21
+ 32) Inj    406 | FRcrit=0.002427 | maj=0@0.55 Δmax=0.002 KL=0.000 | fc1 [1, 1] bit 29
+ 33) Inj      2 | FRcrit=0.002427 | maj=0@0.55 Δmax=0.002 KL=0.000 | fc1 [3, 1] bit 26
+ 34) Inj    402 | FRcrit=0.002427 | maj=0@0.55 Δmax=0.002 KL=0.000 | fc1 [3, 1] bit 28
+ 35) Inj    351 | FRcrit=0.002427 | maj=0@0.55 Δmax=0.002 KL=0.000 | fc1 [2, 0] bit 23
+ 36) Inj     18 | FRcrit=0.002427 | maj=0@0.55 Δmax=0.002 KL=0.000 | fc1 [3, 1] bit 27
+ 37) Inj    377 | FRcrit=0.002427 | maj=0@0.55 Δmax=0.002 KL=0.000 | fc1 [4, 0] bit 24
+ 38) Inj    348 | FRcrit=0.002427 | maj=0@0.55 Δmax=0.002 KL=0.000 | fc1 [1, 2] bit 25
+ 39) Inj     31 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [2, 3] bit 14
+ 40) Inj     32 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [3, 0] bit 15
+ 41) Inj     48 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 1] bit 24
+ 42) Inj     34 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [0, 3] bit 26
+ 43) Inj     40 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 4] bit 21
+ 44) Inj     49 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 5] bit 17
+ 45) Inj     56 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 5] bit 26
+ 46) Inj     35 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 5] bit 4
+ 47) Inj     36 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 3] bit 7
+ 48) Inj     41 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [0, 0] bit 17
+ 49) Inj     44 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [3, 3] bit 31
+ 50) Inj     50 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 5] bit 20
+ 51) Inj     52 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [2, 0] bit 8
+ 52) Inj     57 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 2] bit 9
+ 53) Inj     60 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [3, 2] bit 26
+ 54) Inj     64 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [4, 0] bit 27
+ 55) Inj     68 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [3, 3] bit 6
+ 56) Inj     37 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 0] bit 18
+ 57) Inj     38 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [2, 0] bit 1
+ 58) Inj     82 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [4, 0] bit 6
+ 59) Inj     42 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [0, 0] bit 24
+ 60) Inj     45 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 0] bit 19
+ 61) Inj     46 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 5] bit 0
+ 62) Inj     96 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [0, 3] bit 0
+ 63) Inj     51 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [2, 2] bit 0
+ 64) Inj     53 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [0, 3] bit 1
+ 65) Inj     54 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 1] bit 21
+ 66) Inj     58 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 1] bit 15
+ 67) Inj     61 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 5] bit 25
+ 68) Inj     62 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [1, 3] bit 7
+ 69) Inj     65 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [1, 2] bit 28
+ 70) Inj     66 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [4, 1] bit 16
+ 71) Inj     69 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [1, 3] bit 27
+ 72) Inj     70 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [0, 0] bit 25
+ 73) Inj     72 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 0] bit 25
+ 74) Inj     74 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [1, 1] bit 0
+ 75) Inj     76 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [5, 0] bit 27
+ 76) Inj     39 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [5, 2] bit 7
+ 77) Inj     83 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [3, 1] bit 13
+ 78) Inj     84 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 1] bit 8
+ 79) Inj     86 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [2, 0] bit 28
+ 80) Inj     88 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [0, 3] bit 12
+ 81) Inj     90 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [1, 3] bit 10
+ 82) Inj     92 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 4] bit 1
+ 83) Inj     47 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 2] bit 22
+ 84) Inj     97 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [1, 2] bit 5
+ 85) Inj     98 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [3, 3] bit 24
+ 86) Inj     55 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [3, 0] bit 6
+ 87) Inj     59 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [2, 3] bit 21
+ 88) Inj     63 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [4, 1] bit 7
+ 89) Inj     67 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [1, 1] bit 12
+ 90) Inj     71 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [2, 0] bit 18
+ 91) Inj     73 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [5, 2] bit 8
+ 92) Inj     75 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [1, 3] bit 22
+ 93) Inj     77 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [4, 3] bit 21
+ 94) Inj     78 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 1] bit 9
+ 95) Inj     85 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [2, 0] bit 24
+ 96) Inj     87 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 2] bit 18
+ 97) Inj     89 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [1, 2] bit 1
+ 98) Inj     93 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 1] bit 20
+ 99) Inj     94 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc1 [5, 1] bit 5
+100) Inj     95 | FRcrit=0.000000 | maj=0@0.56 Δmax=0.000 KL=0.000 | fc2 [0, 2] bit 12

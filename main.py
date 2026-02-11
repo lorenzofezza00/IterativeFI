@@ -2,18 +2,19 @@ import csv
 import os
 import argparse
 import torch
-from datasets import get_dataset, datasets
+from datasets import get_dataloaders, datasets
 from networks import get_network
-from injector import WeightFaultInjector, WeightFault
-import torch.nn as nn
-from utils import get_preds
+from injector import WeightFaultInjector, WeightFault, _evaluate_faulty_model
+from utils import _z_from_conf, fpc_factor, halfwidth_normal_fpc, \
+    _initial_n_infinite, plan_n_with_fpc, ep_next_error, wald_ci, \
+        _next_wor_fault, simple_random_sampling, decide_sampling_policy, \
+            _sci_format_comb, FaultIndexer, _unpack_half
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
 import random
-from itertools import product
 import math
-from typing import Optional
+import heapq
+import time
 
 parser = argparse.ArgumentParser(description="Argparse")
 
@@ -24,8 +25,6 @@ parser.add_argument("-root", type=str, help="root datapath", default="../../data
 parser.add_argument("-net", type=str, help="network", default=None)
 parser.add_argument("-weights_path", help="weights_path", default="./networks/weights")
 parser.add_argument("-results_path", help="results_path", default="./results/")
-# parser.add_argument("-preds_path", help="preds_path", default="./preds/")
-
 parser.add_argument("-pilot", type=int, help="pilot", default = 200)
 parser.add_argument("-eps", type=float, help="epsilon", default = 0.005)
 parser.add_argument("-conf", type=float, help="confidence", default = 0.95)
@@ -34,155 +33,32 @@ parser.add_argument("-block", type=int, help="pilot", default=50)
 parser.add_argument("-budget_cap", type=int, help="budget_cap", default=None)
 parser.add_argument("-seed", type=int, help="seed", default=0)
 
-def _get_all_fault_sites(model, as_list=True):
-    def _iter():
-        for name, module in model.named_modules():
-            if isinstance(module, (torch.nn.Linear, torch.nn.Conv2d)):
-                try:
-                    w = module.weight
-                except Exception:
-                    print(f"{name} module does not contain weight")
-                    continue
-                shape = w.shape
-                for idx in product(*[range(s) for s in shape]):
-                    for bit in range(32):
-                        yield (name, idx, bit)
-    return list(_iter()) if as_list else _iter()
-
-def _next_wor_combo(fault_sites, k1_order, k1_ptr):
-    """Ritorna un combo unico (WOR) oppure None se popolazione esaurita."""
-    if k1_order is None or k1_ptr >= len(k1_order):
-        return None
-    idx = k1_order[k1_ptr]
-    k1_ptr += 1
-    return fault_sites[idx], k1_ptr
-
-def srs_combinations(pool, r, seed=None, max_yield=None):
-    rnd = random.Random(seed)
-    n = len(pool)
-    if n == 0:
-        return
-    r = min(r, n)
-    produced = 0
-    while max_yield is None or produced < max_yield:
-        idxs = rnd.sample(range(n), r)
-        yield tuple(pool[i] for i in idxs)
-        produced += 1
-
-def _z_from_conf(conf: float) -> float:
-    table = {0.90: 1.645, 0.95: 1.96, 0.99: 2.576, 0.999: 3.291}
-    return table.get(conf, 1.96)
-
-def fpc_factor(N_pop: Optional[int], n: int) -> float:
-    if not N_pop or N_pop <= 0:
-        return 1.0
-    if n <= 1 or n >= N_pop:
-        val = max(0.0, (N_pop - n) / max(1, N_pop - 1))
-        return math.sqrt(val)
-    return math.sqrt((N_pop - n) / (N_pop - 1))
-
-def halfwidth_normal_fpc(p_hat: float, n: int, conf: float, N_pop: Optional[int]) -> float:
-    z = _z_from_conf(conf)
-    p = min(max(p_hat, 1e-12), 1.0 - 1e-12)
-    hw = z * math.sqrt(p * (1.0 - p) / max(1, n))
-    return hw * fpc_factor(N_pop, n)
-
-def _initial_n_infinite(e_goal: float, conf: float, p0: float = 0.5) -> int:
-    z = _z_from_conf(conf)
-    return int(math.ceil((z*z*p0*(1.0-p0)) / (e_goal*e_goal)))
-
-def plan_n_with_fpc(p_hat: float, e_target: float, conf: float, N_pop: Optional[int]) -> int:
-    z = _z_from_conf(conf)
-    p = min(max(p_hat, 1e-6), 1.0 - 1e-6)
-    if not N_pop or N_pop <= 0:
-        n = math.ceil((z * z * p * (1.0 - p)) / (e_target * e_target))
-        return max(1, n)
-    denom = 1.0 + (e_target * e_target * (N_pop - 1.0)) / (z * z * p * (1.0 - p))
-    n = N_pop / denom
-    return int(min(N_pop, max(1, math.ceil(n))))
-
-def decide_sampling_policy(num_faults: int, K: int, e_goal: float, conf: float, p0: float = 0.5,
-                           exhaustive_cap: Optional[int] = None):
-    """
-    Ritorna: (N_pop, use_fpc, force_exhaustive, n_inf, n_fpc_or_None, ratio)
-    """
-    N_pop = math.comb(num_faults, K)
-    if N_pop <= 0:
-        return 0, False, False, 0, None, 0.0
-
-    n_inf = _initial_n_infinite(e_goal, conf, p0)
-    ratio = n_inf / N_pop
-
-    # Regola 5% STRETTAMENTE maggiore
-    use_fpc = (ratio > 0.05)
-    n_fpc = None
-    if use_fpc:
-        # usa p0 per il planning iniziale; l'iterativo poi aggiorna con p_hat
-        n_fpc = plan_n_with_fpc(p_hat=p0, e_target=e_goal, conf=conf, N_pop=N_pop)
-
-    # forza esaustiva se la n_FPC copre sostanzialmente tutta la popolazione
-    force_exhaustive = False
-    if use_fpc and n_fpc is not None:
-        if n_fpc >= 0.95 * N_pop:
-            force_exhaustive = True
-
-    # opzionale: anche un 'tetto' assoluto a N_pop per andare esaustivo
-    if exhaustive_cap is not None and N_pop <= exhaustive_cap:
-        force_exhaustive = True
-
-    return N_pop, use_fpc, force_exhaustive, n_inf, n_fpc, ratio
-
-def _sci_format_comb(n: int, k: int) -> str:
-    if k < 0 or k > n:
-        return "0"
-    k = min(k, n - k)
-    if k == 0:
-        return "1"
-    ln10 = math.log(10.0)
-    log10_val = (math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)) / ln10
-    exp = int(math.floor(log10_val))
-    mant = 10 ** (log10_val - exp)
-    return f"{mant:.3f}e+{exp:d}"
-
-def ep_next_error(e_goal: float, E_hat: float, p_hat: float) -> float:
-    if E_hat <= 0.0:
-        return e_goal
-    thresh = E_hat / 3.0
-    if thresh <= e_goal:
-        return e_goal
-    k = 4.0 * (thresh - e_goal)
-    val = -k * (p_hat ** 2) + k * p_hat + e_goal
-    return float(min(max(val, e_goal), thresh))
-
-def wald_ci(p_hat: float, n: int, conf: float, N_pop: Optional[int]):
-    half = halfwidth_normal_fpc(p_hat, n, conf, N_pop)
-    z = _z_from_conf(conf)
-    se = half / max(z, 1e-12)
-    low = max(0.0, p_hat - half)
-    high = min(1.0, p_hat + half)
-    return low, high, half, se
-
 def main(args):
     
-    # carico dataset e rete
+    seed = args.seed
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    # dataset and network loading
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
     dataset_name = args.data
     data_root = args.root
     network_name = args.net
     weights_path = args.weights_path
     
     if dataset_name=="cifar10":
-        train_loader, val_loader, test_loader = get_dataset(dataset_name, root=data_root, train_batch_size=128, eval_batch_size=128)
+        train_loader, val_loader, test_loader = get_dataloaders(dataset_name, root=data_root, train_batch_size=128, eval_batch_size=128)
     elif dataset_name=="banknote":
-        train_loader, val_loader, test_loader = get_dataset(dataset_name)
+        train_loader, val_loader, test_loader = get_dataloaders(dataset_name)
     elif dataset_name=='mnist':
-        train_loader, val_loader, test_loader = get_dataset(dataset_name, root=data_root)
+        train_loader, val_loader, test_loader = get_dataloaders(dataset_name, root=data_root)
     
-    
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = get_network(network_name, load_path=weights_path, train_loader=train_loader, test_loader=test_loader)
     model.to(device)
-    # calcolo l'accuracy della rete
-    # g_acc, golden_preds = get_preds(test_loader, model, verb=True)
+    model.eval()
+    
     clean_by_batch = []
     with torch.inference_mode():
         for xb, _ in test_loader:
@@ -195,23 +71,27 @@ def main(args):
     num_classes = int(clean_flat.max().item()) + 1 if clean_flat.numel() > 0 else 2
     baseline_hist = np.bincount(clean_flat.numpy(), minlength=num_classes) if clean_flat.numel() > 0 else np.zeros(2, dtype=int)
     baseline_dist = baseline_hist / max(1, baseline_hist.sum())
-    print(f"[BASELINE] pred dist = {baseline_dist.tolist()}")
     
-    nome_file = "file.txt"
+    print(f"[BASELINE] predictions disttribution = {baseline_dist.tolist()}")
+    
+    # - Build the fault list
+    # - Automatically determine FPC based on n_inf / N_pop (> 5% rule)
+    # - Run the iterative campaign (+FPC if enabled) and saves results
+    
+    t0 = time.time()
+    
+    nome_file = f"net_{network_name}_data_{dataset_name}_iterative_fi.txt"
     os.makedirs(args.results_path, exist_ok=True)
-    output_file = os.path.join(args.results_path, nome_file)
-    # preds_path = args.preds_path
-    # os.makedirs(res_path, exist_ok=True)
-    # os.makedirs(preds_path, exist_ok=True)
-        
-    # Global accumulators
-    global_fault_hist = np.zeros_like(baseline_hist, dtype=np.int64)
-    mism_by_clean_sum = np.zeros(num_classes, dtype=np.int64)
-    cnt_by_clean_sum  = np.zeros(num_classes, dtype=np.int64)
-    global_cm_cf      = np.zeros((num_classes, num_classes), dtype=np.int64)
-    maj_shares, kls   = [], []
-
+    output_file = os.path.join(args.results_path, nome_file)    
+    
+    indexer = FaultIndexer(model)
+    fault_sites = indexer
+    num_faults = len(indexer)
+    if num_faults == 0:
+        raise RuntimeError("Empty fault list: cannot proceed.")
+    
     # Defaults
+    # --- Automatic Policy (> 5% rule) ---
     pilot = args.pilot
     
     eps = args.eps
@@ -224,10 +104,6 @@ def main(args):
     block = args.block
     budget_cap = args.budget_cap
     
-    seed = args.seed
-    
-    fault_sites = _get_all_fault_sites(model=model, as_list=True)
-    num_faults = len(fault_sites)
     K = 1
     BER = K/num_faults
     print(f"BER: {BER}")
@@ -237,7 +113,6 @@ def main(args):
     total_possible, use_fpc_auto, _, n_inf, n_fpc, ratio = \
         decide_sampling_policy(num_faults, K, e_goal, conf, p0, exhaustive_cap)
     
-    # sampling policy
     design = "WOR" if use_fpc_auto else "WR"
     print(f"[POLICY] K={K} | N_pop={total_possible} | n_inf={n_inf} | ratio={ratio:.3%} | FPC_auto={use_fpc_auto} | n_fpc0={n_fpc} | DESIGN={design}")
 
@@ -248,6 +123,24 @@ def main(args):
         f"Launching iterative EP (ctrl={ep_control}){' + FPC' if use_fpc_auto else ''} [{design}]."
     )
     
+    # Injector & basic checks
+    injector = WeightFaultInjector(model)
+    total_samples = len(golden_preds)
+    if total_samples == 0:
+        raise RuntimeError("Empty test loader.")
+
+    # Global accumulators
+    global_fault_hist = np.zeros_like(baseline_hist, dtype=np.int64)
+    mism_by_clean_sum = np.zeros(num_classes, dtype=np.int64)
+    cnt_by_clean_sum  = np.zeros(num_classes, dtype=np.int64)
+    global_cm_cf      = np.zeros((num_classes, num_classes), dtype=np.int64)
+    maj_shares, kls   = [], []
+
+    mean_frcrit = 0.0
+    m2_frcrit   = 0.0
+    count_fr    = 0
+    top_heap    = []  # min-heap for top-100 worst injections
+    
     use_fpc = use_fpc_auto
     N_pop = total_possible
     
@@ -255,65 +148,91 @@ def main(args):
     use_wor = bool(use_fpc and N_pop and K >= 1)
     rng = random.Random(seed)
     
-    # WOR K=1: permutazione dei singoli fault
+    # WOR K=1: single bit faults permutations
     k1_order = None
     k1_ptr = 0
-    if use_wor and K == 1:
-        k1_order = list(range(len(fault_sites)))
+
+    if use_wor:
+        k1_order = list(range(num_faults))
         rng.shuffle(k1_order)
-
     
-    pilot = min(pilot, len(fault_sites))
-    
-    # Fault Injector
-    injector = WeightFaultInjector(model)
-    total_samples = len(golden_preds)
-
-    # Generators WR (vecchio comportamento) quando FPC=OFF
+    # Generators WR when FPC=OFF
     if not use_wor:
-        gen = srs_combinations(num_faults, r=K, seed=seed,   max_yield=pilot)
-        gen_more = srs_combinations(num_faults, r=K, seed=seed+1, max_yield=None)
+        gen = simple_random_sampling(fault_sites, num_faults, seed=seed,   max_yield=pilot)
+        gen_more = simple_random_sampling(fault_sites, num_faults, seed=seed+1, max_yield=None)
     else:
         gen = None
         gen_more = None
-    
-    # Clamp pilot se WOR e abbiamo N_pop
+        
+    # Clamp pilot if using WOR and N_pop is defined
     if use_wor and N_pop:
-        pilot = min(pilot, int(N_pop))
-        if K == 1:
-            pilot = min(pilot, len(fault_sites))
-    
+        pilot = min(pilot, len(fault_sites))
     
     # ------------------ PILOT ------------------
-    injected = 0
-    mean_frcrit = 0.0
-    m2_frcrit   = 0.0
-    count_fr    = 0
     sum_fr, n_inj, inj_id = 0.0, 0, 0
-    pbar = tqdm(total=pilot, desc=f"[PROP] pilot K={K} (WOR)")
-    while injected < pilot:
-        combo, k1_ptr = _next_wor_combo(fault_sites, k1_order, k1_ptr)
-        if combo is None:
-            break  # popolazione esaurita
-        inj_id += 1
-        ln, ti, bt = combo
-        fault = WeightFault(injection=inj_id, layer_name=ln, tensor_index=ti, bit=bt)
-        injector.inject_bit_flip(fault)
-        _, faulty_preds = get_preds(test_loader, model, device=device, verb=False)    
-        injector.restore_golden()
-        
-        frcrit = (golden_preds==faulty_preds).sum()/total_samples
-        sum_fr += frcrit
-        n_inj  += 1
-        injected += 1
-        pbar.update(1)
+    if use_wor:
+        pbar = tqdm(total=pilot, desc=f"[PROP] pilot K={K} (WOR)")
+        injected = 0
+        while injected < pilot:
+            fault_site, k1_ptr = _next_wor_fault(fault_sites, k1_order, k1_ptr)
+            if fault_site is None:
+                break  # Entire population has been processed
+            inj_id += 1
+            frcrit, fault, bias, fh, mbc, cbc, cm = _evaluate_faulty_model(
+                model, device, test_loader, clean_by_batch, injector, fault_site, inj_id, total_samples,
+                baseline_hist, baseline_dist, num_classes
+            )
+            sum_fr += frcrit
+            n_inj  += 1
+            injected += 1
+            pbar.update(1)
 
-        count_fr += 1
-        delta = frcrit - mean_frcrit
-        mean_frcrit += delta / count_fr
-        m2_frcrit += delta * (frcrit - mean_frcrit)
+            count_fr += 1
+            delta = frcrit - mean_frcrit
+            mean_frcrit += delta / count_fr
+            m2_frcrit += delta * (frcrit - mean_frcrit)
+
+            global_fault_hist += fh
+            mism_by_clean_sum += mbc
+            cnt_by_clean_sum  += cbc
+            global_cm_cf      += cm
+            maj_shares.append(bias["maj_share"])
+            kls.append(bias["kl"])
+
+            if len(top_heap) < 100:
+                heapq.heappush(top_heap, (frcrit, inj_id, fault, bias))
+            elif frcrit > top_heap[0][0]:
+                heapq.heapreplace(top_heap, (frcrit, inj_id, fault, bias))
+
+    else:
+        pbar = tqdm(gen, total=pilot, desc=f"[PROP] pilot K={K} (WR)")
+        for fault_site in pbar:
+            inj_id += 1
+            frcrit, fault, bias, fh, mbc, cbc, cm = _evaluate_faulty_model(
+                model, device, test_loader, clean_by_batch, injector, fault_site, inj_id, total_samples,
+                baseline_hist, baseline_dist, num_classes
+            )
+            sum_fr += frcrit
+            n_inj  += 1
+
+            count_fr += 1
+            delta = frcrit - mean_frcrit
+            mean_frcrit += delta / count_fr
+            m2_frcrit += delta * (frcrit - mean_frcrit)
+
+            global_fault_hist += fh
+            mism_by_clean_sum += mbc
+            cnt_by_clean_sum  += cbc
+            global_cm_cf      += cm
+            maj_shares.append(bias["maj_share"])
+            kls.append(bias["kl"])
+
+            if len(top_heap) < 100:
+                heapq.heappush(top_heap, (frcrit, inj_id, fault, bias))
+            elif frcrit > top_heap[0][0]:
+                heapq.heapreplace(top_heap, (frcrit, inj_id, fault, bias))
     
-    # Stima iniziale
+    # Initial estimation
     p_hat = (sum_fr / n_inj) if n_inj else 0.0
     E_wald = halfwidth_normal_fpc(p_hat, n_inj, conf, (N_pop if use_fpc else None))
     E_seq = [(n_inj, E_wald)]
@@ -329,16 +248,16 @@ def main(args):
         if budget_cap and n_inj >= budget_cap:
             break
 
-        # EP controller: prossimo target di errore
+        # EP controller: error target
         e_next = ep_next_error(e_goal=e_goal, E_hat=E_hat, p_hat=p_hat)
 
-        # Pianifica n totale
+        # Plan total sample size
         n_tot_desired = plan_n_with_fpc(
             p_hat=p_hat, e_target=e_next, conf=conf,
             N_pop=(N_pop if use_fpc else None)
         )
         
-        # Cap FPC: n <= N_pop
+        # Limit FPC: n must not exceed N_pop
         if use_fpc and N_pop:
             n_tot_desired = min(n_tot_desired, int(N_pop))
 
@@ -352,23 +271,19 @@ def main(args):
         to_do = add_needed
         while to_do > 0:
             if use_wor:
-                combo, k1_ptr = _next_wor_combo(fault_sites, k1_order, k1_ptr)
-                if combo is None:
-                    # popolazione esaurita: non posso crescere oltre
+                fault_site, k1_ptr = _next_wor_fault(fault_sites, k1_order, k1_ptr)
+                if fault_site is None:
+                    # Entire population has been processed
                     to_do = 0
                     break
             else:
-                combo = next(gen_more)
+                fault_site = next(gen_more)
 
             inj_id += 1
-            ln, ti, bt = combo
-            fault = WeightFault(injection=inj_id, layer_name=ln, tensor_index=ti, bit=bt)
-            
-            injector.inject_bit_flip(fault)
-            faulty_preds, _ = get_preds(test_loader, model, device=device, verb=False)
-            injector.restore_golden()
-        
-            frcrit = (golden_preds==faulty_preds).sum()/total_samples
+            frcrit, fault, bias, fh, mbc, cbc, cm = _evaluate_faulty_model(
+                model, device, test_loader, clean_by_batch, injector, fault_site, inj_id, total_samples,
+                baseline_hist, baseline_dist, num_classes
+            )
             sum_fr += frcrit
             n_inj  += 1
             to_do  -= 1
@@ -379,6 +294,18 @@ def main(args):
             mean_frcrit += delta / count_fr
             m2_frcrit += delta * (frcrit - mean_frcrit)
 
+            global_fault_hist += fh
+            mism_by_clean_sum += mbc
+            cnt_by_clean_sum  += cbc
+            global_cm_cf      += cm
+            maj_shares.append(bias["maj_share"])
+            kls.append(bias["kl"])
+
+            if len(top_heap) < 100:
+                heapq.heappush(top_heap, (frcrit, inj_id, fault, bias))
+            elif frcrit > top_heap[0][0]:
+                heapq.heapreplace(top_heap, (frcrit, inj_id, fault, bias))
+
             if (n_inj % block) == 0:
                 p_hat = (sum_fr / n_inj)
                 E_wald = halfwidth_normal_fpc(p_hat, n_inj, conf, (N_pop if use_fpc else None))
@@ -388,7 +315,7 @@ def main(args):
                 if E_hat <= e_goal or (budget_cap and n_inj >= budget_cap):
                     break
 
-        # Update dopo il batch
+        # Update estimates
         p_hat = (sum_fr / n_inj)
         E_wald = halfwidth_normal_fpc(p_hat, n_inj, conf, (N_pop if use_fpc else None))
         E_hat  = E_wald
@@ -398,7 +325,7 @@ def main(args):
         if E_hat <= e_goal or (budget_cap and n_inj >= budget_cap):
             break
 
-        # Se WOR e popolazione esaurita, stop
+        # if WOR and entire population processed, stop
         if use_wor and K == 1 and k1_order is not None and k1_ptr >= len(k1_order):
             break
     
@@ -434,8 +361,7 @@ def main(args):
     frac_collapse_080 = float(np.mean(maj_shares_arr >= 0.80)) if maj_shares_arr.size else 0.0
     mean_kl = float(np.mean(kls)) if kls else 0.0
 
-    design = "WOR" if use_wor else "WR"
-    # salvataggio dati
+    top_sorted = sorted(top_heap, key=lambda x: x[0], reverse=True)
     design = "WOR" if use_wor else "WR"
     with open(output_file, "w") as f:
         f.write(f"[PROP/{ep_control}] K={K}  FRcrit_avg={avg_frcrit:.8f}  conf={conf}  steps={steps}  n={n_inj}\n")
@@ -447,18 +373,37 @@ def main(args):
         f.write(f"baseline_pred_dist={baseline_dist.tolist()}\n")
         f.write(
             "global_summary_over_injections: "
-            f"fault_pred_dist={global_fault_dist.tolist()} "
-            f"Δmax={global_delta_max:.3f} KL={global_kl:.3f} TV={global_tv:.3f} "
-            f"H_baseline={entropy_baseline:.3f} H_global={entropy_global:.3f} ΔH={entropy_drop:.3f} "
-            f"BER={BER:.4f} per_class={ber_per_class} "
-            f"agree={agree_global:.3f} flip_asym={flip_asym_global:.3f}\n"
+            f"fault_pred_dist = {global_fault_dist.tolist()} "
+            f"Δmax = {global_delta_max:.3f} KL = {global_kl:.3f} TV = {global_tv:.3f} "
+            f"H_baseline = {entropy_baseline:.3f} H_global = {entropy_global:.3f} ΔH = {entropy_drop:.3f} "
+            f"BER = {BER:.4f} per_class = {ber_per_class} "
+            f"agree = {agree_global:.3f} flip_asym = {flip_asym_global:.3f}\n"
         )
-        f.write("\n[E_seq] n, E_wald, E_wilson\n")
+        f.write("\n[E_seq] n, E_wald\n")
         for n_i, ew_i in E_seq:
             f.write(f"{n_i},{ew_i:.8f}\n")
         f.write(f"\n[E_final] E_wald={E_seq[-1][1]:.8f}\n\n")
 
+        f.write(f"Top-{min(100, len(top_sorted))} worst injections (proposed iter EP)\n")
+        for rank, (frcrit, inj, fault, bias) in enumerate(top_sorted, 1):
+            desc = f"{fault.layer_name} {[int(tdx) for tdx in fault.tensor_index]} bit {fault.bit}"
+            f.write(
+                f"{rank:3d}) Inj {inj:6d} | FRcrit={frcrit:.6f} | "
+                f"maj={bias['maj_cls']}@{bias['maj_share']:.2f} Δmax={bias['delta_max']:.3f} "
+                f"KL={bias['kl']:.3f} | {desc}\n"
+            )
+
     print(f"[PROP/{ep_control}] K={K}  avgFRcrit={avg_frcrit:.6f}  Ew_final={E_wald:.6f}  n={n_inj}  DESIGN={design} → {output_file}")
+    
+    dt_min = (time.time() - t0) / 60.0
+    print(f"[PROP/{ep_control}] saved {output_file} – {dt_min:.2f} min "
+          f"(avg FRcrit={avg_frcrit:.6f}, half_norm={half_norm:.6f}, n={n_inj}, steps={steps})")
+    
+    avg_w, half_tuple_w, n_w, _, out_w = avg_frcrit, (half_norm,), n_inj, top_sorted, output_file
+    half_w = _unpack_half(half_tuple_w)
+    print(f"[DONE/WALD] N={K} | FR={avg_w:.6g} | half={half_w:.6g} | injections={n_w} | file={out_w}")
+
+    
 if __name__ == "__main__":
     args = parser.parse_args()
     main(args)

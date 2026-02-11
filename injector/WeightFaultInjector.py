@@ -1,5 +1,7 @@
 import struct
-
+import numpy as np
+import torch
+from .WeightFault import WeightFault
 
 class WeightFaultInjector:
 
@@ -99,3 +101,70 @@ class WeightFaultInjector:
         """
         self.__inject_fault(fault,
                             value=value)
+        
+        
+
+def _evaluate_faulty_model(model, device, test_loader, clean_by_batch, injector, fault_site, inj_id,
+                    total_samples, baseline_hist, baseline_dist, num_classes):
+    ln, ti, bt = fault_site
+    fault = WeightFault(injection=inj_id, layer_name=ln, tensor_index=ti, bit=bt)
+     
+    try:
+        injector.inject_bit_flip(fault)
+        
+        mismatches = 0
+        fault_hist = np.zeros_like(baseline_hist, dtype=np.int64)
+        mism_by_clean = np.zeros(num_classes, dtype=np.int64)
+        cnt_by_clean  = np.zeros(num_classes, dtype=np.int64)
+        cm_cf = np.zeros((num_classes, num_classes), dtype=np.int64)
+
+        with torch.inference_mode():
+            for (batch_i, (xb, _)) in enumerate(test_loader):
+                xb = xb.to(device)
+                logits_f = model(xb)
+                pred_f = torch.argmax(logits_f, dim=1).cpu().numpy()
+                np.add.at(fault_hist, pred_f, 1)
+
+                clean_pred = clean_by_batch[batch_i].numpy()
+                mism = (pred_f != clean_pred)
+                mismatches += int(mism.sum())
+
+                np.add.at(cm_cf, (clean_pred, pred_f), 1)
+
+                for c in range(num_classes):
+                    msk = (clean_pred == c)
+                    cnt_by_clean[c]  += int(msk.sum())
+                    if msk.any():
+                        mism_by_clean[c] += int((pred_f[msk] != c).sum())
+
+        frcrit = mismatches / float(total_samples)
+
+        fault_total = max(1, int(fault_hist.sum()))
+        fault_dist = fault_hist / fault_total
+        maj_cls = int(fault_hist.argmax()) if fault_hist.size > 0 else -1
+        maj_share = float(fault_hist.max()) / fault_total if fault_hist.size > 0 else 0.0
+        delta_max = float(np.max(np.abs(fault_dist - baseline_dist))) if fault_hist.size > 0 else 0.0
+        eps = 1e-12
+        kl = float(np.sum(fault_dist * np.log((fault_dist + eps) / (baseline_dist + eps)))) if fault_hist.size > 0 else 0.0
+
+        off_sum = int(cm_cf.sum() - np.trace(cm_cf))
+        asym_num = 0
+        if num_classes >= 2:
+            diff = np.abs(cm_cf - cm_cf.T)
+            asym_num = int(diff[np.triu_indices(num_classes, k=1)].sum())
+        flip_asym = float(asym_num) / max(1, off_sum)
+        agree = float(np.trace(cm_cf)) / max(1, int(cm_cf.sum()))
+
+        bias = {
+            "maj_cls": maj_cls,
+            "maj_share": maj_share,
+            "delta_max": delta_max,
+            "kl": kl,
+            "flip_asym": flip_asym,
+            "agree": agree
+        }
+
+    finally:
+        injector.restore_golden()
+    
+    return frcrit, fault, bias, fault_hist, mism_by_clean, cnt_by_clean, cm_cf

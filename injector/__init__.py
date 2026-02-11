@@ -1,2 +1,2 @@
-from .WeightFaultInjector import WeightFaultInjector
+from .WeightFaultInjector import WeightFaultInjector, _evaluate_faulty_model
 from .WeightFault import WeightFault
