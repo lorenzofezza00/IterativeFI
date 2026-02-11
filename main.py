@@ -4,9 +4,9 @@ import argparse
 import torch
 from datasets import get_dataset, datasets
 from networks import get_network
-from injector import WeightFaultInjector, FaultListGenerator
+from injector import WeightFaultInjector, WeightFault
 import torch.nn as nn
-from utils import get_preds, save_int_repr, load_int_repr, count_bits_tensor, bit_difference_count
+from utils import get_preds
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -23,8 +23,8 @@ parser.add_argument("-data", choices=available_datasets, required=True, help=f"{
 parser.add_argument("-root", type=str, help="root datapath", default="../../data/")
 parser.add_argument("-net", type=str, help="network", default=None)
 parser.add_argument("-weights_path", help="weights_path", default="./networks/weights")
-parser.add_argument("-res_path", help="results_path", default="./results/")
-parser.add_argument("-preds_path", help="preds_path", default="./preds/")
+parser.add_argument("-results_path", help="results_path", default="./results/")
+# parser.add_argument("-preds_path", help="preds_path", default="./preds/")
 
 parser.add_argument("-pilot", type=int, help="pilot", default = 200)
 parser.add_argument("-eps", type=float, help="epsilon", default = 0.005)
@@ -55,7 +55,7 @@ def _next_wor_combo(fault_sites, k1_order, k1_ptr):
         return None
     idx = k1_order[k1_ptr]
     k1_ptr += 1
-    return (fault_sites[idx],), k1_ptr
+    return fault_sites[idx], k1_ptr
 
 def srs_combinations(pool, r, seed=None, max_yield=None):
     rnd = random.Random(seed)
@@ -100,7 +100,6 @@ def plan_n_with_fpc(p_hat: float, e_target: float, conf: float, N_pop: Optional[
     denom = 1.0 + (e_target * e_target * (N_pop - 1.0)) / (z * z * p * (1.0 - p))
     n = N_pop / denom
     return int(min(N_pop, max(1, math.ceil(n))))
-
 
 def decide_sampling_policy(num_faults: int, K: int, e_goal: float, conf: float, p0: float = 0.5,
                            exhaustive_cap: Optional[int] = None):
@@ -178,16 +177,39 @@ def main(args):
     elif dataset_name=='mnist':
         train_loader, val_loader, test_loader = get_dataset(dataset_name, root=data_root)
     
-    model = get_network(network_name, load_path=weights_path)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = get_network(network_name, load_path=weights_path, train_loader=train_loader, test_loader=test_loader)
+    model.to(device)
     # calcolo l'accuracy della rete
-    g_acc, golden_preds = get_preds(test_loader, model, verb=True)
+    # g_acc, golden_preds = get_preds(test_loader, model, verb=True)
+    clean_by_batch = []
+    with torch.inference_mode():
+        for xb, _ in test_loader:
+            xb = xb.to(device)
+            logits = model(xb)
+            clean_by_batch.append(torch.argmax(logits, dim=1).cpu())
+
+    clean_flat = torch.cat(clean_by_batch, dim=0) if len(clean_by_batch) else torch.tensor([], dtype=torch.long)
+    golden_preds = clean_flat
+    num_classes = int(clean_flat.max().item()) + 1 if clean_flat.numel() > 0 else 2
+    baseline_hist = np.bincount(clean_flat.numpy(), minlength=num_classes) if clean_flat.numel() > 0 else np.zeros(2, dtype=int)
+    baseline_dist = baseline_hist / max(1, baseline_hist.sum())
+    print(f"[BASELINE] pred dist = {baseline_dist.tolist()}")
     
-    # res_path = args.res_path
+    nome_file = "file.txt"
+    os.makedirs(args.results_path, exist_ok=True)
+    output_file = os.path.join(args.results_path, nome_file)
     # preds_path = args.preds_path
     # os.makedirs(res_path, exist_ok=True)
     # os.makedirs(preds_path, exist_ok=True)
+        
+    # Global accumulators
+    global_fault_hist = np.zeros_like(baseline_hist, dtype=np.int64)
+    mism_by_clean_sum = np.zeros(num_classes, dtype=np.int64)
+    cnt_by_clean_sum  = np.zeros(num_classes, dtype=np.int64)
+    global_cm_cf      = np.zeros((num_classes, num_classes), dtype=np.int64)
+    maj_shares, kls   = [], []
 
     # Defaults
     pilot = args.pilot
@@ -244,7 +266,7 @@ def main(args):
     pilot = min(pilot, len(fault_sites))
     
     # Fault Injector
-    fi = WeightFaultInjector(model)
+    injector = WeightFaultInjector(model)
     total_samples = len(golden_preds)
 
     # Generators WR (vecchio comportamento) quando FPC=OFF
@@ -259,7 +281,7 @@ def main(args):
     if use_wor and N_pop:
         pilot = min(pilot, int(N_pop))
         if K == 1:
-            pilot = min(pilot, len(num_faults))
+            pilot = min(pilot, len(fault_sites))
     
     
     # ------------------ PILOT ------------------
@@ -270,11 +292,16 @@ def main(args):
     sum_fr, n_inj, inj_id = 0.0, 0, 0
     pbar = tqdm(total=pilot, desc=f"[PROP] pilot K={K} (WOR)")
     while injected < pilot:
-        combo = _next_wor_combo()
+        combo, k1_ptr = _next_wor_combo(fault_sites, k1_order, k1_ptr)
         if combo is None:
             break  # popolazione esaurita
         inj_id += 1
-        faulty_preds = get_preds(test_loader, model, verb=False)
+        ln, ti, bt = combo
+        fault = WeightFault(injection=inj_id, layer_name=ln, tensor_index=ti, bit=bt)
+        injector.inject_bit_flip(fault)
+        _, faulty_preds = get_preds(test_loader, model, device=device, verb=False)    
+        injector.restore_golden()
+        
         frcrit = (golden_preds==faulty_preds).sum()/total_samples
         sum_fr += frcrit
         n_inj  += 1
@@ -291,7 +318,7 @@ def main(args):
     E_wald = halfwidth_normal_fpc(p_hat, n_inj, conf, (N_pop if use_fpc else None))
     E_seq = [(n_inj, E_wald)]
     E_hat = E_wald
-    print(f"[PROP] after pilot: p̂={p_hat:.6f}  E_wald={E_wald:.6f}  E_wilson={E_wil:.6f}  (ctrl={ep_control})")
+    print(f"[PROP] after pilot: p̂={p_hat:.6f}  E_wald={E_wald:.6f}  (ctrl={ep_control})")
 
     # ------------------ ITERATIVE STEPS ------------------
     steps = 0
@@ -334,7 +361,13 @@ def main(args):
                 combo = next(gen_more)
 
             inj_id += 1
-            faulty_preds = get_preds(test_loader, model, verb=False)
+            ln, ti, bt = combo
+            fault = WeightFault(injection=inj_id, layer_name=ln, tensor_index=ti, bit=bt)
+            
+            injector.inject_bit_flip(fault)
+            faulty_preds, _ = get_preds(test_loader, model, device=device, verb=False)
+            injector.restore_golden()
+        
             frcrit = (golden_preds==faulty_preds).sum()/total_samples
             sum_fr += frcrit
             n_inj  += 1
@@ -401,9 +434,31 @@ def main(args):
     frac_collapse_080 = float(np.mean(maj_shares_arr >= 0.80)) if maj_shares_arr.size else 0.0
     mean_kl = float(np.mean(kls)) if kls else 0.0
 
-    top_sorted = sorted(top_heap, key=lambda x: x[0], reverse=True)
     design = "WOR" if use_wor else "WR"
     # salvataggio dati
+    design = "WOR" if use_wor else "WR"
+    with open(output_file, "w") as f:
+        f.write(f"[PROP/{ep_control}] K={K}  FRcrit_avg={avg_frcrit:.8f}  conf={conf}  steps={steps}  n={n_inj}\n")
+        f.write(f"half_norm={half_norm:.8f}  e_goal={e_goal:.8f}  FPC={'on' if use_fpc else 'off'}  DESIGN={design}  N_pop={N_pop}\n")
+        f.write(f"EP_control={ep_control}  E_wald_final={E_wald:.8f}\n")
+        f.write(f"Wald_CI({int(conf*100)}%):   [{w_low:.8f}, {w_high:.8f}]   half={w_half:.8f}   se={w_se:.8f}   FPC={'on' if use_fpc else 'off'}\n")
+        f.write(f"SampleStdDev_FRcrit_across_injections: s={sample_std:.8f} (n={n_inj})\n")
+        f.write(f"injections_used={n_inj}  pilot={pilot}  block={block}  budget_cap={budget_cap}\n")
+        f.write(f"baseline_pred_dist={baseline_dist.tolist()}\n")
+        f.write(
+            "global_summary_over_injections: "
+            f"fault_pred_dist={global_fault_dist.tolist()} "
+            f"Δmax={global_delta_max:.3f} KL={global_kl:.3f} TV={global_tv:.3f} "
+            f"H_baseline={entropy_baseline:.3f} H_global={entropy_global:.3f} ΔH={entropy_drop:.3f} "
+            f"BER={BER:.4f} per_class={ber_per_class} "
+            f"agree={agree_global:.3f} flip_asym={flip_asym_global:.3f}\n"
+        )
+        f.write("\n[E_seq] n, E_wald, E_wilson\n")
+        for n_i, ew_i in E_seq:
+            f.write(f"{n_i},{ew_i:.8f}\n")
+        f.write(f"\n[E_final] E_wald={E_seq[-1][1]:.8f}\n\n")
+
+    print(f"[PROP/{ep_control}] K={K}  avgFRcrit={avg_frcrit:.6f}  Ew_final={E_wald:.6f}  n={n_inj}  DESIGN={design} → {output_file}")
 if __name__ == "__main__":
     args = parser.parse_args()
     main(args)

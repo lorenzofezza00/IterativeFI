@@ -21,17 +21,11 @@ class BANKNOTE_MLP(nn.Module):  # 36 pesi
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(6, 2)
         
-    # def forward(self, x):
-    #     x = self.relu(self.fc1(x))
-    #     x = self.fc2(x)
-    #     return x
-    
     def forward(self, x):
-        out_fc1 = self.fc1(x)
-        out_relu = self.relu(out_fc1)
-        out_fc2 = self.fc2(out_relu)
-        x = out_fc2
-        return x, (out_fc1, out_relu, out_fc2)
+        x = self.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
+    
 
 
 def load_banknote_dataset(batch_size=32):
